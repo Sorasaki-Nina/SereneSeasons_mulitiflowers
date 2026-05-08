@@ -8,6 +8,9 @@ import com.google.common.collect.Lists;
 import glitchcore.event.TickEvent;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
+import net.minecraft.core.Registry;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ChunkHolder;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.DistanceManager;
@@ -15,7 +18,10 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.BushBlock;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.DoublePlantBlock;
 import net.minecraft.world.level.block.IceBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -32,6 +38,8 @@ import java.util.List;
 
 public class RandomUpdateHandler
 {
+	private static final int BLOCK_UPDATE_FLAGS = 3;
+
 	private static void adjustWeatherFrequency(Level world, Season.SubSeason subSeason)
 	{
 		if (!ModConfig.seasons.changeWeatherFrequency)
@@ -59,7 +67,7 @@ public class RandomUpdateHandler
 		else if (serverLevelData.isThundering()) serverLevelData.setThundering(false);
 	}
 
-	private static void meltInChunk(ChunkMap chunkMap, LevelChunk chunkIn, float meltChance)
+	private static void meltInChunk(ChunkMap chunkMap, LevelChunk chunkIn, float meltChance, Season season)
 	{
 		ServerLevel world = chunkMap.level;
 		ChunkPos chunkpos = chunkIn.getPos();
@@ -80,6 +88,10 @@ public class RandomUpdateHandler
 				if (aboveGroundState.getBlock() == Blocks.SNOW)
 				{
 					world.setBlockAndUpdate(topAirPos, Blocks.AIR.defaultBlockState());
+					if (season == Season.SPRING)
+					{
+						tryGrowFlowerAfterSnowMelt(world, topAirPos);
+					}
 				}
 			}
 
@@ -91,6 +103,84 @@ public class RandomUpdateHandler
 				}
 			}
 		}
+	}
+
+	private static void tryGrowFlowerAfterSnowMelt(ServerLevel world, BlockPos pos)
+	{
+		if (!ModConfig.seasons.growFlowersAfterSnowMelt || world.random.nextDouble() >= ModConfig.seasons.getFlowerGrowthAfterSnowMeltChance())
+			return;
+
+		int attempts = ModConfig.seasons.flowerGrowthAfterSnowMeltAttempts;
+		for (int i = 0; i < attempts; i++)
+		{
+			BlockState flowerState = pickSnowMeltFlower(world);
+			if (flowerState != null && tryPlaceFlower(world, pos, flowerState))
+				return;
+		}
+	}
+
+	private static BlockState pickSnowMeltFlower(ServerLevel world)
+	{
+		List<SeasonsConfig.FlowerGrowthEntry> flowers = ModConfig.seasons.getSnowMeltFlowerEntries();
+		int totalWeight = 0;
+		for (SeasonsConfig.FlowerGrowthEntry flower : flowers)
+		{
+			totalWeight += flower.weight();
+		}
+
+		if (totalWeight <= 0)
+			return null;
+
+		int roll = world.random.nextInt(totalWeight);
+		for (SeasonsConfig.FlowerGrowthEntry flower : flowers)
+		{
+			roll -= flower.weight();
+			if (roll < 0)
+			{
+				return resolveFlowerBlock(world, flower.block());
+			}
+		}
+
+		return null;
+	}
+
+	private static BlockState resolveFlowerBlock(ServerLevel world, String blockId)
+	{
+		try
+		{
+			Registry<Block> blockRegistry = world.registryAccess().lookupOrThrow(Registries.BLOCK);
+			Block block = blockRegistry.get(ResourceLocation.parse(blockId));
+			if (block == null || !(block instanceof BushBlock))
+				return null;
+
+			return block.defaultBlockState();
+		}
+		catch (Exception e)
+		{
+			return null;
+		}
+	}
+
+	private static boolean tryPlaceFlower(ServerLevel world, BlockPos pos, BlockState flowerState)
+	{
+		if (flowerState.getBlock() instanceof DoublePlantBlock)
+		{
+			BlockPos upperPos = pos.above();
+			if (pos.getY() >= world.getMaxBuildHeight() - 1 || !world.getBlockState(pos).isAir() || !world.getBlockState(upperPos).isAir())
+				return false;
+
+			if (!flowerState.canSurvive(world, pos))
+				return false;
+
+			DoublePlantBlock.placeAt(world, flowerState, pos, BLOCK_UPDATE_FLAGS);
+			return true;
+		}
+
+		if (!world.getBlockState(pos).isAir() || !flowerState.canSurvive(world, pos))
+			return false;
+
+		world.setBlockAndUpdate(pos, flowerState);
+		return true;
 	}
 
 
@@ -142,7 +232,7 @@ public class RandomUpdateHandler
 						{
 							for(int i = 0; i < rolls; i++)
 							{
-								meltInChunk(chunkMap, levelChunk, meltRand);
+								meltInChunk(chunkMap, levelChunk, meltRand, season);
 							}
 						}
 					}

@@ -35,6 +35,7 @@ public class SeasonsConfig extends glitchcore.config.Config
     private static final IntProvider THUNDER_DELAY = UniformInt.of(12000, 180000);
 
     private static final Predicate<List<Config>> SEASON_PROPERTIES_VALIDATOR = (configs) -> configs.stream().allMatch(c -> SeasonProperties.decode(c).isPresent());
+    private static final Predicate<List<Config>> SNOW_MELT_FLOWERS_VALIDATOR = (configs) -> configs.stream().allMatch(c -> FlowerGrowthEntry.decode(c).isPresent());
 
     private static final Map<Season.SubSeason, SeasonProperties> DEFAULT_SEASON_PROPERTIES = Lists.newArrayList(
             new SeasonProperties(Season.SubSeason.EARLY_WINTER, 0.0F, 0, -0.8F, 12000, 36000, -1, -1),
@@ -50,6 +51,27 @@ public class SeasonsConfig extends glitchcore.config.Config
             new SeasonProperties(Season.SubSeason.MID_AUTUMN, 8.33F, 1, 0.0F, RAIN_DELAY.getMinValue(), RAIN_DELAY.getMaxValue(), THUNDER_DELAY.getMinValue(), THUNDER_DELAY.getMaxValue()),
             new SeasonProperties(Season.SubSeason.LATE_AUTUMN, 6.25F, 1, -0.25F, RAIN_DELAY.getMinValue(), RAIN_DELAY.getMaxValue(), THUNDER_DELAY.getMinValue(), THUNDER_DELAY.getMaxValue())
     ).stream().collect(Collectors.toMap(SeasonProperties::subSeason, v -> v));
+
+    private static final List<FlowerGrowthEntry> DEFAULT_SNOW_MELT_FLOWERS = Lists.newArrayList(
+            new FlowerGrowthEntry("minecraft:dandelion", 8),
+            new FlowerGrowthEntry("minecraft:poppy", 8),
+            new FlowerGrowthEntry("minecraft:azure_bluet", 8),
+            new FlowerGrowthEntry("minecraft:oxeye_daisy", 8),
+            new FlowerGrowthEntry("minecraft:cornflower", 8),
+            new FlowerGrowthEntry("minecraft:allium", 8),
+            new FlowerGrowthEntry("minecraft:red_tulip", 8),
+            new FlowerGrowthEntry("minecraft:orange_tulip", 8),
+            new FlowerGrowthEntry("minecraft:white_tulip", 8),
+            new FlowerGrowthEntry("minecraft:pink_tulip", 8),
+            new FlowerGrowthEntry("minecraft:lily_of_the_valley", 6),
+            new FlowerGrowthEntry("minecraft:blue_orchid", 4),
+            new FlowerGrowthEntry("minecraft:sunflower", 4),
+            new FlowerGrowthEntry("minecraft:lilac", 4),
+            new FlowerGrowthEntry("minecraft:rose_bush", 4),
+            new FlowerGrowthEntry("minecraft:peony", 4),
+            new FlowerGrowthEntry("minecraft:pitcher_plant", 1),
+            new FlowerGrowthEntry("minecraft:wither_rose", 1)
+    );
 
     private static final Predicate<List<String>> RESOURCE_LOCATION_VALIDATOR = (list) ->
     {
@@ -89,6 +111,13 @@ public class SeasonsConfig extends glitchcore.config.Config
 
     // Snow melting settings
     private List<Config> seasonProperties;
+
+    // Flower growth after snow melt settings
+    public boolean growFlowersAfterSnowMelt;
+    public double flowerGrowthAfterSnowMeltChance;
+    public int flowerGrowthAfterSnowMeltAttempts;
+    private List<Config> snowMeltFlowerEntries;
+    private Supplier<List<FlowerGrowthEntry>> snowMeltFlowerEntriesMapper;
 
     private Supplier<Map<Season.SubSeason, SeasonProperties>> seasonPropertiesMapper;
 
@@ -131,6 +160,18 @@ public class SeasonsConfig extends glitchcore.config.Config
             seasonProperties.stream().map(SeasonProperties::decode).forEach(o -> o.ifPresent(v -> map.put(v.subSeason(), v)));
             return map;
         });
+
+        growFlowersAfterSnowMelt = add("flower_growth_after_snow_melt.enabled", true, "Generate flowers when snow melts during Spring");
+        flowerGrowthAfterSnowMeltChance = add("flower_growth_after_snow_melt.chance", 0.08D, "The 0-1 percentage chance a melted snow layer will attempt to grow a flower during Spring. (e.g. 1.0 = 100%, 0.5 = 50%)");
+        flowerGrowthAfterSnowMeltAttempts = addNumber("flower_growth_after_snow_melt.placement_attempts", 3, 1, 16, "The number of weighted flowers to try before giving up when the chosen flower cannot be placed");
+
+        final List<Config> defaultSnowMeltFlowers = DEFAULT_SNOW_MELT_FLOWERS.stream().map(FlowerGrowthEntry::encode).toList();
+        snowMeltFlowerEntries = add("flower_growth_after_snow_melt.flowers", defaultSnowMeltFlowers, """
+                Flowers that can grow when snow melts during Spring.
+                block is the block id to place.
+                weight controls how often the flower is chosen relative to the other entries.""", SNOW_MELT_FLOWERS_VALIDATOR);
+
+        snowMeltFlowerEntriesMapper = Suppliers.memoize(() -> snowMeltFlowerEntries.stream().map(FlowerGrowthEntry::decode).flatMap(Optional::stream).toList());
     }
 
     public boolean isDimensionWhitelisted(ResourceKey<Level> dimension)
@@ -150,6 +191,45 @@ public class SeasonsConfig extends glitchcore.config.Config
     public SeasonProperties getSeasonProperties(Season.SubSeason season)
     {
         return seasonPropertiesMapper.get().get(season);
+    }
+
+    public double getFlowerGrowthAfterSnowMeltChance()
+    {
+        return Math.max(0.0D, Math.min(1.0D, flowerGrowthAfterSnowMeltChance));
+    }
+
+    public List<FlowerGrowthEntry> getSnowMeltFlowerEntries()
+    {
+        return snowMeltFlowerEntriesMapper.get();
+    }
+
+    public record FlowerGrowthEntry(String block, int weight)
+    {
+        public Config encode()
+        {
+            Config config = Config.of(LinkedHashMap::new, InMemoryFormat.withUniversalSupport());
+            config.add("block", this.block);
+            config.add("weight", this.weight);
+            return config;
+        }
+
+        public static Optional<FlowerGrowthEntry> decode(Config config)
+        {
+            try
+            {
+                String block = config.get("block");
+                int weight = config.getInt("weight");
+
+                ResourceLocation.parse(block);
+                Preconditions.checkArgument(weight > 0);
+
+                return Optional.of(new FlowerGrowthEntry(block, weight));
+            }
+            catch (Exception e)
+            {
+                return Optional.empty();
+            }
+        }
     }
 
     public record SeasonProperties(Season.SubSeason subSeason, float meltChance, int meltRolls, float biomeTempAdjustment, int minRainTime, int maxRainTime, int minThunderTime, int maxThunderTime)
