@@ -8,8 +8,7 @@ import com.google.common.collect.Lists;
 import glitchcore.event.TickEvent;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
-import net.minecraft.core.Registry;
-import net.minecraft.core.registries.Registries;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ChunkHolder;
 import net.minecraft.server.level.ChunkMap;
@@ -148,8 +147,7 @@ public class RandomUpdateHandler
 	{
 		try
 		{
-			Registry<Block> blockRegistry = world.registryAccess().lookupOrThrow(Registries.BLOCK);
-			Block block = blockRegistry.get(ResourceLocation.parse(blockId));
+			Block block = BuiltInRegistries.BLOCK.get(ResourceLocation.parse(blockId));
 			if (block == null || !(block instanceof BushBlock))
 				return null;
 
